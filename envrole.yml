@@ -1,0 +1,14 @@
+---
+- name: "Deploy application"
+  hosts: "localhost"
+
+  roles:
+    - day_11
+  vars_prompt:
+    - name: "project"
+      prompt: "Enter Your Project Name Here:"
+      private: no
+
+    - name: "env"
+      prompt: "Enter the environment(stg/prod):"
+      private: no

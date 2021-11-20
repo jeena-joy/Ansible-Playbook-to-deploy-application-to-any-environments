@@ -1,0 +1,101 @@
+---
+# tasks file for env
+
+- name: "Fetch details of staging Environment"
+  ec2_instance_info:
+    region: "{{ region }}"
+    aws_access_key:  "{{ access_key }}"
+    aws_secret_key: "{{ secret_key }}"
+    filters:
+      "tag:aws:autoscaling:groupName": "staging_asg"
+  register: staging_info
+
+- name: "Fetch details of production Environment"
+  ec2_instance_info:
+    region: "{{ region }}"
+    aws_access_key:  "{{ access_key }}"
+    aws_secret_key: "{{ secret_key }}"
+    filters:
+      "tag:aws:autoscaling:groupName": "production_asg"
+  register: prodction_info
+
+- name: "Installing packages"
+  yum:
+    name:
+      - httpd
+      - git
+    state: present
+
+- name: "Creating Dynamic Inventory For Production"
+  when: env == "prod"
+  add_host:
+    groups: "server"
+    hostname: "{{ item.public_ip_address }}"
+    ansible_host: "{{ item.public_ip_address }}"
+    ansible_user: "{{ ssh }}"
+    ansible_port: 22
+    ansible_private_key_file: "{{key}}.pem"
+    ansible_ssh_common_args: "-o StrictHostKeyChecking=no"
+  with_items:
+    - "{{production_info.instances}}"
+
+- name: "Creating Dynamic Inventory For Staging"
+  when: env == "stg"
+  add_host:
+    groups: "server"
+    hostname: "{{ item.public_ip_address }}"
+    ansible_host: "{{ item.public_ip_address }}"
+    ansible_user: "{{ ssh }}"
+    ansible_port: 22
+    ansible_private_key_file: "{{key}}.pem"
+    ansible_ssh_common_args: "-o StrictHostKeyChecking=no"
+  with_items:
+    - "{{staging_info.instances}}"
+
+- name: "clone repository from Github"
+  git:
+    repo: "{{git_url}}"
+    dest: "{{clone_dir}}"
+  register: git_info
+
+- name: "off-load instance from loadbalancer"
+  when: git_info.changed == true
+  service:
+    name: httpd
+    state: stopped
+
+- name: "wait for connection draining"
+  when: git_info.changed == true
+  pause:
+    seconds: 10
+
+- name: "copy contents to document root"
+  when: git_info.changed == true
+  copy:
+    src: "{{clone_dir}}"
+    dest: "/var/www/html/"
+    owner: "apache"
+    group: "apache"
+    remote_src: true
+
+- name: "Load instance back to loadbalancer"
+  when: git_info.changed == true
+  service:
+    name: httpd
+    state: restarted
+    enabled: true
+
+- name: "wait for health check pass"
+  when: git_info.changed == true
+  pause:
+    seconds: 20
+
+- name: "deployment status"
+  when: git_info.changed == false
+  debug:
+    msg: " {{ansible_hostname}} {{ansible_host}} already have the latest version"
+
+- name: "deployment status 2"
+  when: git_info.changed == true
+  debug:
+    msg: " {{ansible_hostname}} {{ansible_host}} DEPLOYMENT COMPLETED SUCCESSFULLY"
